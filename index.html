@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<script>
+window.contextInfo = {};
+// 处理锚点链接跳转（srcDoc iframe 中锚点链接默认行为不正确）
+document.addEventListener('click', function(e) {
+  var anchor = e.target.closest('a');
+  if (anchor) {
+    var href = anchor.getAttribute('href');
+    if (href && href.startsWith('#')) {
+      e.preventDefault();
+      var targetId = href.slice(1);
+      var target = document.getElementById(targetId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  }
+});
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>色彩提取与编码</title>
+<!-- PWA 配置 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1d1d1f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="色彩提取">
+<link rel="apple-touch-icon" href="icon-512.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        apple: {
+                            dark: '#1d1d1f',
+                            light: '#f5f5f7',
+                            border: '#e5e5e7',
+                            bg: '#fafafa',
+                        }
+                    }
+                }
+            }
+        }
+        window.addEventListener('DOMContentLoaded', function() {
+            loadLibraryFromStorage();
+            const darkModeSaved = localStorage.getItem('darkMode');
+            if (darkModeSaved === 'true') {
+                document.body.classList.add('dark-mode');
+                document.getElementById('dark-mode-btn').innerHTML = '<i class="fa-regular fa-sun"></i>';
+                isDarkMode = true;
+            }
+        });
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500&display=swap');
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", sans-serif;
+            background-color: #fafafa;
+            color: #1d1d1f;
+            letter-spacing: 0.02em;
+            line-height: 1.7;
+        }
+
+        .font-serif {
+            font-family: 'Noto Serif SC', serif;
+        }
+
+        .fade-in { animation: fadeIn 0.8s ease-out forwards; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .toast-enter { animation: toastEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .toast-leave { animation: toastLeave 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes toastEnter {
+            from { opacity: 0; transform: translate(-50%, 20px) scale(0.95); }
+            to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+        }
+        @keyframes toastLeave {
+            from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+            to { opacity: 0; transform: translate(-50%, 20px) scale(0.95); }
+        }
+        
+        .upload-area { transition: all 0.3s ease; }
+        .upload-area.dragover { background-color: #f5f5f7; border-color: #1d1d1f; }
+        
+        .scheme-bar div { transition: flex 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        .scheme-bar div:hover { flex: 2 !important; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e5e5e7; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #d1d1d6; }
+        
+        button { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+
+        body, header, footer, .bg-white, .text-apple-dark, .border-apple-border {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        body.dark-mode {
+            background-color: #000000;
+            color: #ffffff;
+        }
+
+        body.dark-mode header {
+            background-color: #000000;
+            border-color: #2c2c2e;
+        }
+
+        body.dark-mode .bg-white {
+            background-color: #1c1c1e !important;
+        }
+
+        body.dark-mode .text-apple-dark {
+            color: #ffffff !important;
+        }
+
+        body.dark-mode .text-gray-500,
+        body.dark-mode .text-gray-600 {
+            color: #a1a1a6 !important;
+        }
+
+        body.dark-mode .border-apple-border {
+            border-color: #2c2c2e !important;
+        }
+
+        body.dark-mode .bg-apple-dark {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+        }
+
+        body.dark-mode footer {
+            background-color: #000000;
+            border-color: #2c2c2e;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-apple-border py-12 px-6 text-center relative">
+        <div class="absolute top-6 right-6 z-20 flex gap-3">
+            <button id="dark-mode-btn" onclick="toggleDarkMode()" class="bg-white hover:bg-gray-50 text-apple-dark border border-apple-border px-4 py-2 rounded-xl text-sm font-light flex items-center shadow-sm">
+                <i class="fa-regular fa-moon"></i>
+            </button>
+            <button onclick="openLibraryModal()" class="bg-white hover:bg-gray-50 text-apple-dark border border-apple-border px-5 py-2 rounded-xl text-sm font-light flex items-center shadow-sm">
+                <i class="fa-regular fa-folder-open mr-2"></i>收藏管理
+            </button>
+        </div>
+        
+        <div class="relative z-10 max-w-4xl mx-auto mt-4">
+            <h1 class="text-3xl md:text-4xl font-light mb-3 tracking-wide text-apple-dark">
+                色彩提取与编码
+            </h1>
+            <p class="text-gray-500 text-base font-light tracking-wide">从自然与生活中发现纯粹的色彩</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-6xl mx-auto w-full py-12 px-6">
+        
+        <!-- Tool Features -->
+        <div class="bg-white rounded-2xl p-10 mb-12 border border-apple-border shadow-sm">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-sm text-gray-500 font-light">
+                <div class="flex flex-col items-center text-center"><i class="fa-solid fa-droplet text-2xl mb-4 text-apple-dark opacity-80"></i>色彩提取</div>
+                <div class="flex flex-col items-center text-center"><i class="fa-solid fa-tag text-2xl mb-4 text-apple-dark opacity-80"></i>色名匹配</div>
+                <div class="flex flex-col items-center text-center"><i class="fa-regular fa-face-smile text-2xl mb-4 text-apple-dark opacity-80"></i>情绪标注</div>
+                <div class="flex flex-col items-center text-center"><i class="fa-regular fa-folder-open text-2xl mb-4 text-apple-dark opacity-80"></i>收藏管理</div>
+            </div>
+        </div>
+        
+        <!-- Upload Section -->
+        <div id="upload-section" class="bg-white rounded-2xl shadow-sm p-16 mb-12 border border-dashed border-gray-300 text-center cursor-pointer hover:border-gray-400 upload-area relative"
+             onclick="document.getElementById('file-input').click()"
+             ondragover="event.preventDefault(); this.classList.add('dragover')"
+             ondragleave="this.classList.remove('dragover')"
+             ondrop="handleDrop(event)">
+            
+            <input type="file" id="file-input" class="hidden" accept="image/png, image/jpeg, image/webp" onchange="handleFileSelect(event)">
+            
+            <div class="w-16 h-16 mx-auto bg-gray-50 rounded-full flex items-center justify-center mb-6">
+                <i class="fa-solid fa-arrow-up-from-bracket text-xl text-gray-600"></i>
+            </div>
+            <h3 class="text-xl font-light text-apple-dark mb-3">点击选择或拖拽图片至此</h3>
+            <p class="text-gray-400 font-light text-sm">支持 JPG, PNG 格式</p>
+            
+            <!-- Loading overlay -->
+            <div id="loading-overlay" class="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center hidden z-20">
+                <div class="w-8 h-8 border-2 border-gray-200 border-t-apple-dark rounded-full animate-spin mb-4"></div>
+                <p class="text-apple-dark font-light tracking-widest text-sm">正在提取...</p>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="result-section" class="hidden fade-in">
+            
+            <!-- Control Bar -->
+            <div class="flex flex-col sm:flex-row justify-between items-center gap-4 mb-8">
+                <button onclick="resetApp()" class="px-6 py-2.5 bg-white border border-apple-border text-apple-dark rounded-xl hover:bg-gray-50 shadow-sm font-light flex items-center w-full sm:w-auto justify-center text-sm">
+                    <i class="fa-solid fa-arrow-left-long mr-2"></i>重新采集
+                </button>
+                <div class="flex gap-4 w-full sm:w-auto">
+                    <button onclick="saveToLibrary()" class="flex-1 sm:flex-none px-6 py-2.5 bg-white text-apple-dark border border-apple-border rounded-xl hover:bg-gray-50 shadow-sm font-light flex items-center justify-center text-sm">
+                        <i class="fa-regular fa-bookmark mr-2"></i>保存收藏
+                    </button>
+                    <button onclick="exportToImage(event)" class="flex-1 sm:flex-none px-6 py-2.5 bg-apple-dark text-white rounded-xl hover:opacity-90 shadow-sm font-light flex items-center justify-center text-sm">
+                        <i class="fa-solid fa-download mr-2"></i>导出海报
+                    </button>
+                </div>
+            </div>
+
+            <!-- Export Wrapper -->
+            <div id="export-container" class="bg-white rounded-2xl shadow-sm border border-apple-border overflow-hidden relative mb-12">
+                <div class="p-8 md:p-12">
+                    <div class="text-center mb-12 border-b border-apple-border pb-8">
+                        <h2 class="text-3xl font-light text-apple-dark tracking-widest font-serif">色彩提取记录</h2>
+                        <p class="text-gray-400 text-xs mt-3 font-light tracking-[0.2em] uppercase">Color Palette</p>
+                    </div>
+
+                    <div class="flex flex-col lg:flex-row gap-12">
+                        <!-- Left: Preview Image -->
+                        <div class="lg:w-1/3 flex flex-col">
+                            <h3 class="text-base font-light text-gray-800 mb-6 flex items-center tracking-wide">
+                                灵感源图
+                            </h3>
+                            <div class="bg-gray-50 rounded-xl p-3 border border-apple-border flex items-center justify-center">
+                                <img id="preview-image" src="" alt="预览图" class="w-full h-auto rounded-lg shadow-sm object-contain max-h-[400px]">
+                            </div>
+                        </div>
+                        
+                        <!-- Right: Extracted Colors -->
+                        <div class="lg:w-2/3">
+                            <div class="flex justify-between items-center mb-6">
+                                <h3 class="text-base font-light text-gray-800 flex items-center tracking-wide">
+                                    主色谱提取
+                                </h3>
+                                <div id="overall-emotion" class="flex flex-wrap gap-2 justify-end">
+                                    <!-- Emotion tags -->
+                                </div>
+                            </div>
+                            
+                            <div id="color-cards-container" class="grid grid-cols-2 sm:grid-cols-4 gap-6">
+                                <!-- Color cards -->
+                            </div>
+                            
+                            <!-- Emotion Selector -->
+                            <div class="mt-10 pt-8 border-t border-apple-border" data-html2canvas-ignore="true">
+                                <h3 class="text-sm font-light text-gray-800 mb-5 flex items-center tracking-wide">
+                                    情绪标注
+                                </h3>
+                                <div class="flex flex-wrap gap-3 mb-4" id="emotion-buttons">
+                                    <!-- Buttons -->
+                                </div>
+                                <div class="flex gap-3 max-w-sm">
+                                    <input type="text" id="custom-emotion-input" placeholder="自定义情绪..." onkeydown="if(event.key==='Enter') addCustomEmotion()" class="flex-grow px-4 py-2 border border-apple-border rounded-xl text-sm font-light focus:outline-none focus:border-gray-400 bg-gray-50 focus:bg-white transition-colors">
+                                    <button onclick="addCustomEmotion()" class="px-5 py-2 bg-white border border-apple-border hover:bg-gray-50 text-apple-dark rounded-xl text-sm font-light">添加</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="my-12 h-px bg-apple-border"></div>
+
+                    <!-- Color Schemes -->
+                    <div>
+                        <h3 class="text-base font-light text-gray-800 mb-8 flex items-center tracking-wide">
+                            配色方案建议
+                        </h3>
+                        <div id="color-schemes-container" class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                            <!-- Schemes -->
+                        </div>
+                    </div>
+                    
+                    <div class="mt-16 text-center text-gray-400 text-xs font-light tracking-widest">
+                        GENERATED BY COLOR PALETTE TOOL
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </main>
+
+    <footer class="text-center py-8 border-t border-apple-border bg-white text-gray-400 text-xs font-light tracking-wide mt-auto">
+        <p>基于本地计算 · 保护隐私</p>
+    </footer>
+
+    <!-- Library Modal -->
+    <div id="library-modal" class="fixed inset-0 bg-black/40 backdrop-blur-md z-50 hidden flex items-center justify-center p-4 opacity-0 transition-opacity duration-300">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col transform scale-95 transition-transform duration-300 overflow-hidden">
+            <div class="p-8 border-b border-apple-border flex justify-between items-center bg-white">
+                <h2 class="text-xl font-light text-apple-dark tracking-wide">收藏管理</h2>
+                <button onclick="closeLibraryModal()" class="text-gray-400 hover:text-gray-800 transition-colors w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-8 overflow-y-auto flex-grow bg-[#fafafa]" id="library-grid">
+                <!-- Library items -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- State Variables ---
+        let currentColors = [];
+        let currentEmotions = [];
+        let currentImageData = '';
+        let colorLibrary = [];
+
+        // Init
+        function loadLibraryFromStorage() {
+            try {
+                const stored = localStorage.getItem('colorLibrary');
+                if (stored) colorLibrary = JSON.parse(stored);
+            } catch(e) { console.error(e); }
+        }
+
+        // --- Chinese Color Dictionary ---
+        const colorDict = Object.entries({
+            // White & Gray
+            "乳白":[249,244,220],"粉白":[251,242,227],"象牙白":[255,255,240],"月白":[214,236,240],"霜色":[233,241,246],"雪白":[240,246,245],"浅灰白":[239,238,236],"米白":[250,250,245],"鱼肚白":[242,246,233],"芦花白":[221,219,210],"珍珠白":[233,230,217],"蚌肉白":[249,241,219],"荔肉白":[242,230,206],"莲子白":[229,211,170],"菊蕾白":[233,221,182],"荷花白":[251,236,222],"纯白":[255,255,255],
+            "银灰":[192,192,192],"苍灰":[168,176,174],"铅灰":[136,144,150],"瓦灰":[106,115,125],"炭灰":[54,69,79],"玄青":[61,59,79],"月灰":[183,174,143],"尘灰":[182,164,118],"鹤灰":[74,64,53],"淡松烟":[77,64,48],"百灵鸟灰":[180,169,146],"松鼠灰":[79,64,50],"猴毛灰":[151,132,108],"海鸥灰":[154,136,120],"石板灰":[98,73,65],"珠母灰":[100,72,61],"蛛网灰":[183,160,145],"淡铁灰":[91,66,58],"海豹灰":[72,51,50],"银鼠灰":[181,170,144],"晓灰":[212,196,183],"淡玫瑰灰":[184,148,133],"玫瑰灰":[175,46,43],"暖灰":[128,120,110],
+            
+            // Yellow & Orange
+            "杏仁黄":[249,236,195],"茉莉黄":[248,223,114],"柠檬黄":[252,211,55],"藤黄":[254,209,16],"姜黄":[226,192,39],"土黄":[214,160,29],"橘橙":[249,125,28],"杏黄":[250,142,22],"琥珀":[255,191,0],"蜜黄":[251,185,87],"金叶黄":[255,166,15],"麦秆黄":[248,223,112],"油菜花黄":[251,218,65],"佛手黄":[254,215,26],"篾黄":[247,222,152],"葵扇黄":[248,216,106],"金瓜黄":[252,210,23],"酪黄":[246,222,173],"香水玫瑰黄":[247,218,148],"淡密黄":[249,211,103],"大豆黄":[251,205,49],"素馨黄":[252,203,22],"向日葵黄":[254,204,17],"雅梨黄":[251,200,47],"黄连黄":[252,197,21],"金盏黄":[252,195,7],"蛋壳黄":[248,195,135],"肉色":[247,193,115],"鹅掌黄":[251,185,41],"鸡蛋黄":[251,182,18],"柚黄":[252,183,10],"榴萼黄":[249,166,51],"淡橘橙":[251,164,20],"枇杷黄":[252,161,6],"橙皮黄":[252,161,4],"北瓜黄":[252,140,35],"雄黄":[255,153,0],"万寿菊黄":[251,139,5],"秋葵黄":[238,208,69],"硫华黄":[242,206,43],"芒果黄":[221,200,113],"蒿黄":[223,194,67],"香蕉黄":[228,191,17],"草黄":[210,180,44],"豆汁黄":[248,232,193],"淡茧黄":[249,215,112],"乳鸭黄":[255,201,12],"象牙黄":[240,214,149],"炒米黄":[244,206,105],"鹦鹉冠黄":[246,196,48],"木瓜黄":[249,193,22],"浅烙黄":[249,189,16],"谷黄":[232,176,4],"栀子黄":[235,177,13],"芥黄":[217,164,14],"米色":[249,223,205],"淡肉色":[248,224,176],"麦芽糖黄":[249,210,125],"琥珀黄":[254,186,7],"甘草黄":[243,191,76],"初熟杏黄":[248,188,49],"沙石黄":[229,183,81],"虎皮黄":[234,173,26],"山鸡黄":[183,139,38],"龟背黄":[130,107,72],"苍黄":[128,99,50],"莱阳梨黄":[129,95,37],"金莺黄":[244,168,58],"玳瑁黄":[218,164,90],"软木黄":[222,158,68],"风帆黄":[220,145,35],"美人焦橙":[250,126,35],"海螺橙":[240,148,93],"蟹壳红":[242,118,53],"金莲花橙":[248,107,29],"金黄":[242,123,31],"金驼":[228,104,40],"鹅黄":[255,241,67],"鸡油黄":[253,185,51],"秋香色":[217,182,17],"赤金":[242,190,69],"鎏金":[230,155,3],"缃":[240,194,57],
+            
+            // Red & Pink
+            "桃红":[240,173,160],"朱红":[237,81,38],"大红":[240,75,34],"柿红":[242,72,27],"胭脂":[157,41,51],"绯红":[237,81,38],"玫瑰粉":[248,179,127],"落英淡粉":[249,232,208],"润红":[247,205,188],"珊瑚红":[240,74,58],"绛红":[140,67,86],"樱桃红":[237,51,33],"嫣红":[233,52,70],"丹":[242,72,27],"彤":[243,83,54],"殷红":[164,26,45],"中国红":[222,41,16],"朱砂红":[255,76,0],"淡桃红":[246,206,193],"颊红":[238,170,156],"淡罂粟红":[238,160,140],"晨曦红":[234,137,88],"草莓红":[239,111,72],"龙睛鱼红":[239,99,43],"蜻蜓红":[241,68,29],"榴花红":[243,71,24],"银朱":[244,62,6],"鲑鱼红":[240,156,90],"醉瓜肉":[219,133,64],"燕颔红":[252,99,21],"玉粉红":[232,180,154],"野蔷薇红":[251,153,104],"菠萝红":[252,121,48],"陶瓷红":[225,103,35],"余烬红":[207,117,67],"火砖红":[205,98,39],"绀红":[166,82,44],"淡米粉":[251,238,226],"初桃粉红":[246,220,206],"介壳淡粉红":[247,207,186],"淡藏花红":[246,173,143],"瓜瓤红":[246,140,96],"芙蓉红":[249,114,61],"莓酱红":[250,93,25],"法螺红":[238,128,85],"落霞红":[207,72,19],"蟹螯红":[177,75,40],"洋水仙红":[244,199,186],"谷鞘红":[241,118,102],"苹果红":[241,86,66],"铁水红":[245,57,28],"桂红":[242,90,71],"极光红":[243,59,31],"粉红":[242,185,178],"舌红":[241,151,144],"曲红":[240,90,70],"红汞红":[242,62,35],"淡绯":[242,202,201],"无花果红":[239,175,173],"榴子红":[241,144,140],"合欢红":[240,161,168],"春梅红":[241,147,156],"香叶红":[240,124,130],"萝卜红":[241,60,34],"淡茜红":[231,124,142],"艳红":[237,90,101],"淡曙红":[237,72,69],"鱼鳃红":[237,59,47],"淡蕊香红":[238,72,102],"石竹红":[238,72,99],"草茉莉红":[239,71,93],"茶花红":[238,63,77],"构树红":[237,51,51],"秋海棠红":[236,43,36],"丽春红":[235,38,26],"夕阳红":[222,42,24],"鹤顶红":[212,37,23],"鹅血石红":[171,55,47],"覆盆子红":[172,31,24],"牡丹粉红":[238,162,164],"山茶红":[237,85,106],"海棠红":[240,55,82],"玉红":[192,72,81],"高粱红":[192,44,56],"满江红":[167,83,90],"枣红":[124,24,35],"水粉":[244,208,230],"胭脂粉":[230,138,184],"酡颜":[249,144,111],"炎":[255,51,0],"水红":[243,211,230],"赤":[195,39,43],"绾":[169,129,117],"檀":[179,109,97],"缇":[237,112,81],"绯":[237,81,38],"绛":[140,67,86],
+            
+            // Purple
+            "紫罗兰":[238,130,238],"丁香紫":[204,164,227],"黛紫":[87,66,102],"绛紫":[140,67,86],"堇紫":[104,50,117],"魏紫":[126,22,113],"茄紫":[97,46,89],"苋菜紫":[155,30,100],"酱紫":[90,31,27],"玫瑰紫":[110,31,90],"藤萝紫":[128,118,163],"藕荷":[237,195,174],"貂紫":[93,49,49],"暗玉紫":[92,34,35],"栗紫":[90,25,27],"葡萄酱紫":[90,18,22],"葡萄紫":[76,31,36],"青莲":[128,29,174],"雪青":[176,164,227],"苍紫":[112,77,109],"紫":[128,0,128],
+            
+            // Blue & Cyan
+            "天蓝":[135,206,235],"湖蓝":[48,223,243],"靛蓝":[6,82,121],"藏青":[46,78,126],"宝蓝":[75,92,196],"孔雀蓝":[0,164,197],"蔚蓝":[112,243,255],"瓦蓝":[86,152,195],"晴蓝":[86,149,151],"湛蓝":[27,84,242],"幽蓝":[23,43,77],"钴蓝":[0,71,171],"普蓝":[0,49,83],"群青":[76,141,174],"石青":[123,200,164],"碧青":[92,189,170],"花青":[0,52,114],"靛青":[22,107,171],"海蓝":[36,116,181],"青色":[0,224,158],"青":[116,149,154],"蓝":[0,0,255],"绀":[0,49,79],
+            
+            // Green
+            "青绿":[65,174,60],"松石绿":[64,224,208],"草绿":[115,184,57],"葱绿":[153,208,122],"墨绿":[30,50,30],"橄榄绿":[94,83,20],"豆绿":[178,194,170],"苔绿":[127,148,106],"艾绿":[164,176,145],"柳绿":[141,153,101],"竹绿":[27,167,132],"翠绿":[32,161,98],"碧绿":[42,181,146],"苹果绿":[186,206,102],"军绿":[75,83,32],"鼠尾草绿":[158,170,145],"新禾绿":[210,177,22],"淡灰绿":[173,158,85],"草灰绿":[142,128,75],"碧螺春绿":[134,112,24],"潭水绿":[100,88,34],"枯绿":[183,141,18],"鲛青":[135,114,62],"粽叶绿":[135,104,24],"灰绿":[138,105,19],"暗海水绿":[88,71,23],"棕榈绿":[91,73,19],"蜴蜊绿":[131,94,29],"蟹壳绿":[81,60,32],"古铜绿":[83,60,27],"焦茶绿":[85,59,24],"松绿":[90,110,75],"橄榄灰绿":[105,125,90],"油绿":[0,175,102],"翠":[0,203,101],"碧":[26,220,180],"缥":[127,236,173],"绿":[0,229,0],
+            
+            // Brown & Black
+            "驼色":[160,142,115],"赭红":[140,75,49],"秋色棕":[137,108,57],"黄褐":[124,101,72],"暖灰褐":[98,92,83],"深褐":[101,67,33],"焦褐":[91,51,17],"沙褐":[194,178,128],"咖啡":[180,123,48],"栗色":[128,0,0],"赭石":[139,69,19],"乌黑":[25,27,28],"漆黑":[22,24,35],"墨黑":[25,27,28],"鸦青":[66,76,80],"紫檀":[76,34,27],"卡其":[195,176,145],"燕羽灰":[104,94,72],"蟹壳灰":[105,94,69],"浅驼色":[226,193,124],"橄榄褐":[107,98,71],"灰褐":[115,102,87],"鹿角棕":[227,189,141],"凋叶棕":[231,162,63],"桂皮淡棕":[192,147,81],"山鸡褐":[152,101,36],"茶褐":[93,61,33],"古铜褐":[92,55,25],"鹿皮褐":[217,145,86],"麂棕":[222,118,34],"淡银灰":[193,178,163],"淡赭":[190,126,74],"槟榔综":[193,101,26],"淡咖啡":[148,88,51],"岩石棕":[150,77,34],"芒果棕":[149,68,22],"丁香棕":[113,54,29],"笋皮棕":[115,46,18],"铁棕":[216,89,22],"淡可可棕":[183,81,29],"中红灰":[139,97,77],"淡豆沙":[135,61,36],"椰壳棕":[136,58,30],"中灰驼":[96,61,48],"淡栗棕":[103,52,36],"可可棕":[101,43,28],"柞叶棕":[105,42,27],"火泥棕":[170,106,76],"橡树棕":[119,61,49],"火山棕":[72,37,34],"豆沙":[72,30,28],"火岩棕":[134,48,32],"暗驼棕":[89,38,32],"酱棕":[90,31,27],"栗棕":[92,30,25],"黑":[0,0,0],"褐":[165,42,42],"玄":[98,42,29],"漆":[22,24,35]
+        }).map(([name, rgb]) => ({ name, rgb }));
+        // --- End of Dictionary ---
+
+        // --- Core Functions ---
+        function rgbToXyz(r, g, b) {
+            let _r = r / 255;
+            let _g = g / 255;
+            let _b = b / 255;
+
+            _r = _r > 0.04045 ? Math.pow((_r + 0.055) / 1.055, 2.4) : _r / 12.92;
+            _g = _g > 0.04045 ? Math.pow((_g + 0.055) / 1.055, 2.4) : _g / 12.92;
+            _b = _b > 0.04045 ? Math.pow((_b + 0.055) / 1.055, 2.4) : _b / 12.92;
+
+            _r *= 100;
+            _g *= 100;
+            _b *= 100;
+
+            const x = _r * 0.4124564 + _g * 0.3575761 + _b * 0.1804375;
+            const y = _r * 0.2126729 + _g * 0.7151522 + _b * 0.0721750;
+            const z = _r * 0.0193339 + _g * 0.1191920 + _b * 0.9503041;
+
+            return { x, y, z };
+        }
+
+        function xyzToLab(x, y, z) {
+            const refX = 95.047;
+            const refY = 100.000;
+            const refZ = 108.883;
+
+            let _x = x / refX;
+            let _y = y / refY;
+            let _z = z / refZ;
+
+            _x = _x > 0.008856 ? Math.pow(_x, 1 / 3) : (7.787 * _x) + (16 / 116);
+            _y = _y > 0.008856 ? Math.pow(_y, 1 / 3) : (7.787 * _y) + (16 / 116);
+            _z = _z > 0.008856 ? Math.pow(_z, 1 / 3) : (7.787 * _z) + (16 / 116);
+
+            const l = (116 * _y) - 16;
+            const a = 500 * (_x - _y);
+            const b = 200 * (_y - _z);
+
+            return { l, a, b };
+        }
+
+        function rgbToLab(r, g, b) {
+            const { x, y, z } = rgbToXyz(r, g, b);
+            return xyzToLab(x, y, z);
+        }
+
+        function deltaE(lab1, lab2) {
+            return Math.sqrt(
+                Math.pow(lab1.l - lab2.l, 2) +
+                Math.pow(lab1.a - lab2.a, 2) +
+                Math.pow(lab1.b - lab2.b, 2)
+            );
+        }
+
+        function getNearestColorName(rgb) {
+            const targetLab = rgbToLab(rgb[0], rgb[1], rgb[2]);
+            let minDistance = Infinity;
+            let nearestName = "未知色";
+            
+            const r = rgb[0], g = rgb[1], b = rgb[2];
+            const isGreenish = (g > r + 8) && (g > b + 8);
+
+            for (let color of colorDict) {
+                const colorLab = rgbToLab(color.rgb[0], color.rgb[1], color.rgb[2]);
+                let d = deltaE(targetLab, colorLab);
+                
+                if (isGreenish) {
+                    const cR = color.rgb[0], cG = color.rgb[1], cB = color.rgb[2];
+                    const isColorGreenish = (cG > cR && cG > cB) || color.name.includes("绿");
+                    if (!isColorGreenish) {
+                        d += 20;
+                    }
+                }
+
+                if (d < minDistance) {
+                    minDistance = d;
+                    nearestName = color.name;
+                }
+            }
+            return nearestName;
+        }
+
+        function rgbToHex(r, g, b) {
+            return "#" + (1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1).toUpperCase();
+        }
+
+        function averageColor(pixels) {
+            if(pixels.length === 0) return [0,0,0];
+            let r = 0, g = 0, b = 0;
+            for (let i = 0; i < pixels.length; i++) {
+                r += pixels[i][0]; g += pixels[i][1]; b += pixels[i][2];
+            }
+            return [Math.round(r / pixels.length), Math.round(g / pixels.length), Math.round(b / pixels.length)];
+        }
+
+        function medianCut(pixels, depth) {
+            if (depth === 0 || pixels.length === 0) {
+                return pixels.length > 0 ? [averageColor(pixels)] : [];
+            }
+            if (pixels.length === 1) return [pixels[0]];
+            
+            let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
+            for (let i = 0; i < pixels.length; i++) {
+                const p = pixels[i];
+                if (p[0] < minR) minR = p[0]; if (p[0] > maxR) maxR = p[0];
+                if (p[1] < minG) minG = p[1]; if (p[1] > maxG) maxG = p[1];
+                if (p[2] < minB) minB = p[2]; if (p[2] > maxB) maxB = p[2];
+            }
+            
+            const rangeR = maxR - minR;
+            const rangeG = maxG - minG;
+            const rangeB = maxB - minB;
+            
+            if (rangeR === 0 && rangeG === 0 && rangeB === 0) {
+                return [averageColor(pixels)];
+            }
+            
+            let channelIndex = 0;
+            if (rangeG >= rangeR && rangeG >= rangeB) channelIndex = 1;
+            if (rangeB >= rangeR && rangeB >= rangeG) channelIndex = 2;
+            
+            pixels.sort((a, b) => a[channelIndex] - b[channelIndex]);
+            const medianIndex = Math.floor(pixels.length / 2);
+            
+            const left = pixels.slice(0, medianIndex);
+            const right = pixels.slice(medianIndex);
+            
+            return [...medianCut(left, depth - 1), ...medianCut(right, depth - 1)];
+        }
+
+        function extractColorsFromImage(imgElement) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            
+            const maxSize = 150; 
+            let width = imgElement.width;
+            let height = imgElement.height;
+            
+            if (width > height) {
+                if (width > maxSize) { height *= maxSize / width; width = maxSize; }
+            } else {
+                if (height > maxSize) { width *= maxSize / height; height = maxSize; }
+            }
+            
+            canvas.width = Math.floor(width);
+            canvas.height = Math.floor(height);
+            ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
+            
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            const pixels = [];
+            
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i+3] > 128) {
+                    pixels.push([data[i], data[i+1], data[i+2]]);
+                }
+            }
+            
+            let extracted = medianCut(pixels, 3);
+            
+            extracted.sort((a, b) => {
+                const lumA = 0.299*a[0] + 0.587*a[1] + 0.114*a[2];
+                const lumB = 0.299*b[0] + 0.587*b[1] + 0.114*b[2];
+                return lumB - lumA;
+            });
+            
+            return extracted;
+        }
+
+        // --- Emotion Logic ---
+        const defaultEmotions = ['温暖', '宁静', '活力', '清新', '柔和', '明亮'];
+
+        function getInitialEmotions(colors) {
+            let avgR = 0, avgG = 0, avgB = 0;
+            colors.forEach(c => { avgR += c[0]; avgG += c[1]; avgB += c[2]; });
+            avgR /= colors.length; avgG /= colors.length; avgB /= colors.length;
+
+            let emotions = [];
+            if (avgR > 180 && avgG > 180 && avgB > 180) emotions.push("明亮", "清新");
+            else if (avgR < 80 && avgG < 80 && avgB < 80) emotions.push("宁静");
+            else if (avgR > avgG + 30 && avgR > avgB + 30) emotions.push("温暖", "活力");
+            else if (avgB > avgR + 30 && avgB > avgG + 30) emotions.push("宁静", "清新");
+            else if (avgG > avgR + 20 && avgG > avgB + 20) emotions.push("清新", "活力");
+            else emotions.push("柔和");
+            
+            return [...new Set(emotions)];
+        }
+
+        function renderEmotionButtons() {
+            const container = document.getElementById('emotion-buttons');
+            container.innerHTML = defaultEmotions.map(emotion => {
+                const isSelected = currentEmotions.includes(emotion);
+                const btnClass = isSelected 
+                    ? 'bg-apple-dark text-white border-apple-dark' 
+                    : 'bg-white text-gray-500 hover:bg-gray-50 border-apple-border';
+                return `<button onclick="toggleEmotion('${emotion}')" class="px-5 py-2.5 rounded-xl border text-sm font-light transition-colors ${btnClass} tracking-wide">${emotion}</button>`;
+            }).join('');
+            
+            const customEmotions = currentEmotions.filter(e => !defaultEmotions.includes(e));
+            container.innerHTML += customEmotions.map(emotion => {
+                return `<button onclick="toggleEmotion('${emotion}')" class="px-5 py-2.5 rounded-xl border text-sm font-light transition-colors bg-apple-dark text-white border-apple-dark group relative flex items-center tracking-wide">
+                    ${emotion} <i class="fa-solid fa-xmark ml-2 opacity-60 group-hover:opacity-100 text-xs"></i>
+                </button>`;
+            }).join('');
+        }
+
+        function toggleEmotion(emotion) {
+            if (currentEmotions.includes(emotion)) {
+                currentEmotions = currentEmotions.filter(e => e !== emotion);
+            } else {
+                currentEmotions.push(emotion);
+            }
+            renderEmotionButtons();
+            renderEmotionTags();
+        }
+
+        function addCustomEmotion() {
+            const input = document.getElementById('custom-emotion-input');
+            const val = input.value.trim();
+            if (val && !currentEmotions.includes(val)) {
+                currentEmotions.push(val);
+                input.value = '';
+                renderEmotionButtons();
+                renderEmotionTags();
+            }
+        }
+
+        function renderEmotionTags() {
+            const container = document.getElementById('overall-emotion');
+            if (currentEmotions.length === 0) {
+                container.innerHTML = `<span class="text-sm text-gray-400 font-light px-2 py-1">未标注情绪</span>`;
+                return;
+            }
+            container.innerHTML = currentEmotions.map(e => 
+                `<span class="px-4 py-1.5 bg-gray-50 text-gray-600 border border-gray-200 rounded-full text-xs font-light shadow-sm tracking-wide">
+                    ${e}
+                </span>`
+            ).join('');
+        }
+
+        // --- UI Rendering ---
+        function renderColorCards(colors) {
+            const container = document.getElementById('color-cards-container');
+            container.innerHTML = '';
+            
+            colors.forEach((color, index) => {
+                const rgbStr = `${color[0]}, ${color[1]}, ${color[2]}`;
+                const hexStr = rgbToHex(color[0], color[1], color[2]);
+                const name = getNearestColorName(color);
+                
+                const html = `
+                    <div class="bg-white border border-apple-border rounded-xl overflow-hidden shadow-sm fade-in hover:shadow-md transition-shadow duration-300" style="animation-delay: ${index * 0.05}s">
+                        <div class="h-32 w-full" style="background-color: rgb(${rgbStr}) !important;"></div>
+                        <div class="p-5 bg-white text-center">
+                            <div class="text-lg font-serif tracking-widest text-apple-dark mb-2">${name}</div>
+                            <div class="text-sm font-light text-gray-500 tracking-wider">${hexStr}</div>
+                            <div class="text-xs text-gray-400 font-mono mt-1 font-light">RGB ${rgbStr}</div>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += html;
+            });
+        }
+
+        function renderColorSchemes(colors) {
+            const container = document.getElementById('color-schemes-container');
+            container.innerHTML = '';
+            
+            if (colors.length < 3) return;
+
+            const schemes = [
+                { title: "和谐相近", desc: "色彩明度相近，适合营造宁静统一的视觉体验。", colors: [colors[0], colors[1], colors[2], colors[3]].filter(Boolean) },
+                { title: "对比冲击", desc: "跨度较大的色彩组合，产生强烈的对比与活力。", colors: [colors[0], colors[Math.floor(colors.length/2)], colors[colors.length-1]].filter(Boolean) },
+                { title: "层次渐进", desc: "由浅入深的搭配，建立画面的空间感与层次厚度。", colors: [colors[1], colors[4], colors[6]].filter(Boolean) }
+            ];
+            
+            schemes.forEach((scheme, i) => {
+                if(scheme.colors.length === 0) return;
+                
+                let colorBlocks = scheme.colors.map(c => {
+                    return `<div class="flex-1 h-16" style="background-color: rgb(${c[0]},${c[1]},${c[2]})"></div>`;
+                }).join('');
+                
+                const html = `
+                    <div class="bg-white rounded-xl p-6 border border-apple-border fade-in hover:shadow-sm transition-shadow" style="animation-delay: ${i*0.1 + 0.3}s">
+                        <h4 class="font-light text-apple-dark mb-2 text-lg tracking-wide">${scheme.title}</h4>
+                        <p class="text-xs text-gray-500 font-light mb-5 h-8 leading-relaxed">${scheme.desc}</p>
+                        <div class="flex w-full rounded-lg overflow-hidden scheme-bar shadow-sm">
+                            ${colorBlocks}
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += html;
+            });
+        }
+
+        // --- Event Handlers ---
+        function handleDrop(e) {
+            e.preventDefault();
+            document.getElementById('upload-section').classList.remove('dragover');
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                processFile(e.dataTransfer.files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            if (e.target.files && e.target.files[0]) {
+                processFile(e.target.files[0]);
+            }
+        }
+
+        function processFile(file) {
+            if (!file.type.match('image.*')) {
+                alert("请上传图片文件 (JPG/PNG/WEBP)");
+                return;
+            }
+            
+            const loading = document.getElementById('loading-overlay');
+            loading.classList.remove('hidden');
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    setTimeout(() => {
+                        const colors = extractColorsFromImage(img);
+                        
+                        currentImageData = e.target.result;
+                        currentColors = colors;
+                        currentEmotions = getInitialEmotions(colors);
+                        
+                        document.getElementById('preview-image').src = currentImageData;
+                        renderColorCards(currentColors);
+                        renderColorSchemes(currentColors);
+                        renderEmotionButtons();
+                        renderEmotionTags();
+                        
+                        loading.classList.add('hidden');
+                        document.getElementById('upload-section').classList.add('hidden');
+                        document.getElementById('result-section').classList.remove('hidden');
+                    }, 400);
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function resetApp() {
+            document.getElementById('file-input').value = '';
+            document.getElementById('upload-section').classList.remove('hidden');
+            document.getElementById('result-section').classList.add('hidden');
+            currentColors = [];
+            currentEmotions = [];
+            currentImageData = '';
+        }
+
+        function exportToImage(event) {
+            const container = document.getElementById('export-container');
+            const btn = event ? event.currentTarget : null;
+            const originalContent = btn ? btn.innerHTML : '';
+            
+            if(btn) {
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>生成中...';
+                btn.disabled = true;
+            }
+
+            const animatedElements = container.querySelectorAll('.fade-in');
+            animatedElements.forEach(el => {
+                el.style.opacity = '1';
+                el.style.transform = 'translateY(0)';
+                el.style.animation = 'none';
+            });
+
+            setTimeout(() => {
+                html2canvas(container, {
+                    scale: 2,
+                    useCORS: true,
+                    backgroundColor: '#ffffff',
+                    logging: false,
+                    allowTaint: true,
+                    foreignObjectRendering: false
+                }).then(canvas => {
+                    animatedElements.forEach(el => {
+                        el.style.animation = '';
+                    });
+                    
+                    const link = document.createElement('a');
+                    link.download = '色彩提取记录.png';
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                    
+                    if(btn) {
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                    }
+                }).catch(err => {
+                    console.error('Export failed:', err);
+                    alert("导出失败，请重试");
+                    if(btn) {
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                    }
+                });
+            }, 300); 
+        }
+
+        // --- Library Functions ---
+        function saveToLibrary() {
+            if (currentColors.length === 0) return;
+            
+            // 压缩图片
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.src = currentImageData;
+            
+            // 等待图片加载
+            img.onload = function() {
+                const maxWidth = 600;
+                let width = img.width;
+                let height = img.height;
+                
+                if (width > maxWidth) {
+                    height = (height * maxWidth) / width;
+                    width = maxWidth;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                const compressedData = canvas.toDataURL('image/jpeg', 0.6);
+                
+                const record = {
+                    id: Date.now(),
+                    imageData: compressedData,
+                    colors: [...currentColors],
+                    emotions: [...currentEmotions],
+                    date: new Date().toLocaleDateString('zh-CN')
+                };
+                
+                colorLibrary.unshift(record);
+                
+                try {
+                    localStorage.setItem('colorLibrary', JSON.stringify(colorLibrary));
+                    showToast('已保存至收藏夹！');
+                } catch(e) {
+                    colorLibrary.shift(); // 回滚
+                    console.error('保存失败:', e);
+                    showToast('保存失败：' + (e.name === 'QuotaExceededError' ? '存储空间已满' : '请重试'));
+                }
+            };
+        }
+
+        function showToast(message) {
+            const existing = document.getElementById('app-toast');
+            if (existing) existing.remove();
+            
+            const toast = document.createElement('div');
+            toast.id = 'app-toast';
+            toast.className = 'fixed top-12 left-1/2 transform -translate-x-1/2 bg-apple-dark text-white px-6 py-3 rounded-full shadow-lg z-[100] toast-enter flex items-center text-sm font-light tracking-wide';
+            toast.innerHTML = `<i class="fa-regular fa-circle-check mr-2"></i>${message}`;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.replace('toast-enter', 'toast-leave');
+                setTimeout(() => toast.remove(), 400);
+            }, 2500);
+        }
+
+        function openLibraryModal() {
+            const modal = document.getElementById('library-modal');
+            const modalInner = modal.querySelector('div');
+            renderLibrary();
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modalInner.classList.remove('scale-95');
+                modalInner.classList.add('scale-100');
+            }, 10);
+        }
+
+        function closeLibraryModal() {
+            const modal = document.getElementById('library-modal');
+            const modalInner = modal.querySelector('div');
+            modal.classList.add('opacity-0');
+            modalInner.classList.remove('scale-100');
+            modalInner.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
+        function renderLibrary() {
+            const grid = document.getElementById('library-grid');
+            if (colorLibrary.length === 0) {
+                grid.innerHTML = '<div class="text-center text-gray-400 py-20 w-full col-span-full"><i class="fa-regular fa-folder-open text-4xl mb-4 text-gray-300"></i><p class="font-light tracking-wide">收藏夹为空</p></div>';
+                return;
+            }
+            
+            grid.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8 w-full">' + colorLibrary.map(item => {
+                const colorBars = item.colors.slice(0, 6).map(c => 
+                    `<div class="flex-1 h-full" style="background-color: rgb(${c[0]},${c[1]},${c[2]})"></div>`
+                ).join('');
+                
+                const tags = item.emotions.slice(0, 3).map(e => `<span class="px-2 py-1 bg-gray-50 text-gray-600 rounded-md text-xs border border-apple-border font-light tracking-wide">${e}</span>`).join('');
+                const moreTags = item.emotions.length > 3 ? `<span class="px-2 py-1 bg-gray-50 text-gray-600 rounded-md text-xs border border-apple-border font-light tracking-wide">+${item.emotions.length-3}</span>` : '';
+                
+                return `
+                    <div class="bg-white rounded-xl shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden border border-apple-border cursor-pointer group flex flex-col" onclick="loadFromLibrary(${item.id})">
+                        <div class="h-40 overflow-hidden relative bg-gray-50">
+                            <img src="${item.imageData}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out">
+                            <button onclick="event.stopPropagation(); deleteFromLibrary(${item.id})" class="absolute top-3 right-3 w-8 h-8 bg-white/80 hover:bg-white text-gray-600 hover:text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-sm backdrop-blur-md">
+                                <i class="fa-regular fa-trash-can text-sm"></i>
+                            </button>
+                        </div>
+                        <div class="h-12 flex w-full">
+                            ${colorBars}
+                        </div>
+                        <div class="p-5 flex-grow flex flex-col justify-between bg-white">
+                            <div class="flex gap-2 flex-wrap mb-4">
+                                ${tags}${moreTags}
+                            </div>
+                            <div class="text-xs text-gray-400 flex items-center justify-between font-light">
+                                <span>${item.date}</span>
+                                <span class="text-apple-dark opacity-0 group-hover:opacity-100 transition-opacity flex items-center tracking-wide">加载 <i class="fa-solid fa-arrow-right ml-1 text-[10px]"></i></span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('') + '</div>';
+        }
+
+        function deleteFromLibrary(id) {
+            colorLibrary = colorLibrary.filter(item => item.id !== id);
+            try {
+                localStorage.setItem('colorLibrary', JSON.stringify(colorLibrary));
+            } catch(e) {}
+            renderLibrary();
+            showToast('已删除');
+        }
+
+        function loadFromLibrary(id) {
+            const item = colorLibrary.find(i => i.id === id);
+            if (!item) return;
+            
+            closeLibraryModal();
+            
+            document.getElementById('upload-section').classList.add('hidden');
+            document.getElementById('result-section').classList.remove('hidden');
+            
+            currentImageData = item.imageData;
+            currentColors = [...item.colors];
+            currentEmotions = [...item.emotions];
+            
+            document.getElementById('preview-image').src = currentImageData;
+            renderColorCards(currentColors);
+            renderColorSchemes(currentColors);
+            renderEmotionTags();
+            renderEmotionButtons();
+            
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function loadLibraryFromStorage() {
+            try {
+                const stored = localStorage.getItem('colorLibrary');
+                colorLibrary = stored ? JSON.parse(stored) : [];
+            } catch(e) {
+                colorLibrary = [];
+            }
+        }
+
+        let isDarkMode = false;
+
+        function toggleDarkMode() {
+            isDarkMode = !isDarkMode;
+            document.body.classList.toggle('dark-mode', isDarkMode);
+            
+            try {
+                localStorage.setItem('darkMode', isDarkMode);
+            } catch(e) {}
+            
+            updateDarkModeButton();
+        }
+
+        function updateDarkModeButton() {
+            const btn = document.getElementById('dark-mode-btn');
+            if (isDarkMode) {
+                btn.innerHTML = '<i class="fa-regular fa-sun"></i>';
+            } else {
+                btn.innerHTML = '<i class="fa-regular fa-moon"></i>';
+            }
+        }
+
+        function loadDarkModePreference() {
+            try {
+                const saved = localStorage.getItem('darkMode');
+                if (saved === 'true') {
+                    isDarkMode = true;
+                    document.body.classList.add('dark-mode');
+                    updateDarkModeButton();
+                }
+            } catch(e) {}
+        }
+
+        // 立即执行，不等 DOMContentLoaded
+        loadLibraryFromStorage();
+        loadDarkModePreference();
+
+        window.addEventListener('DOMContentLoaded', () => {
+            // 页面加载完成后的其他初始化
+        });
+    </script>
+</body>
+</html>
